@@ -1,0 +1,387 @@
+\documentclass[english]{beamer}
+\definecolor{links}{HTML}{2A1B81}
+\hypersetup{colorlinks,linkcolor=,urlcolor=links}
+\usepackage{natbib}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{pdfpages}
+\usepackage{amsmath}
+\usepackage{bm}
+%\usepackage{multicolumn}
+\usepackage{color}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{graphicx}
+\let\oldemph=\emph
+\renewcommand{\emph}[1]{{\color{red} {\textbf{#1}}}}
+\newcommand{\pkglink}[1]{\href{http://cran.r-project.org/web/packages/#1}{\nolinkurl{#1}}}
+\newcommand{\rflink}[1]{\href{https://r-forge.r-project.org/projects/#1/}{\nolinkurl{#1}}}
+\newcommand{\fnlink}[2]{\href{http://stat.ethz.ch/R-manual/R-patched/library/#1/html/#2.html}{\nolinkurl{#1:#2}}}
+\newcommand{\code}[1]{{\tt #1}}
+\newcommand{\ssqobs}{\sigma^2_{\mbox{\small obs}}}
+\newcommand{\ssqproc}{\sigma^2_{\mbox{\small proc}}}
+\newcommand{\obs}[1]{#1_{\text{\small obs}}}
+\newcommand{\obst}[1]{#1_{\text{\small obs}}(t)}
+\newcommand{\obstm}[1]{#1_{\text{\small obs}}(t-1)}
+
+\bibliographystyle{notitle}
+
+
+\usetheme{Berlin}
+\setbeamercovered{transparent}
+
+\usepackage{babel}
+\begin{document}
+
+\makeatletter
+\def\newblock{\beamer@newblock}
+\makeatother 
+
+
+% http://tex.stackexchange.com/questions/38015/beamer-best-way-to-span-long-enumerations-on-different-frames
+\makeatletter
+\newenvironment{cenumerate}{%
+  \enumerate
+  \setcounter{\@enumctr}{\csname saved@\@enumctr\endcsname}%
+}{%
+  \expandafter\xdef\csname saved@\@enumctr\endcsname{\the\value{\@enumctr}}%
+  \endenumerate
+}
+\newenvironment{cenumerate*}{%
+  \enumerate
+}{%
+  \expandafter\xdef\csname saved@\@enumctr\endcsname{\the\value{\@enumctr}}%
+  \endenumerate
+}
+\makeatother
+<<opts,echo=FALSE>>=
+require("knitr")
+knit_hooks$set(crop=hook_pdfcrop)
+opts_chunk$set(fig.width=4,fig.height=4,
+               out.width="0.6\\textwidth",
+               fig.align="center",
+               tidy=FALSE,echo=FALSE,warning=FALSE,message=FALSE)
+@
+<<libs,echo=FALSE,message=FALSE>>=
+## library(reshape)
+## library(lattice)
+## library(lme4)
+## library(plotrix)
+library(ggplot2)
+library(RColorBrewer)
+library(mvbutils) ## for foodweb()
+library(lme4)
+library(grid)
+library(scales) ## for 'scientific', 'trans_format'
+theme_set(theme_bw())
+## theme_update(axis.text.x=element_text(colour="black",size=12),
+##           axis.text.y=element_text(colour="black",,size=12),
+##           axis.ticks=element_line(colour="black"),
+##           panel.grid.minor = element_blank(),
+##           panel.grid.major = element_blank(),
+##           panel.background=element_rect(fill="white",colour="white"),
+##           panel.margin=unit(0,"lines"))
+
+## source("labfuns.R")
+@ 
+
+\newcommand{\lmefour}{\code{lme4}}
+\newcommand{\nlme}{\code{nlme}}
+\title[]{\code{lme4}: past, present, future}
+\author{Ben Bolker}
+\institute[]{McMaster University, Mathematics \& Statistics and Biology }
+
+\date{12 August 2013}
+% \pgfdeclareimage[height=0.5cm]{uflogo}{letterhdwm}
+% \logo{\pgfuseimage{uflogo}}
+ \AtBeginSection[]{
+   \frame<beamer>{ 
+      \frametitle{Outline}   
+      \tableofcontents[currentsection] 
+    }
+  }
+
+\begin{frame}
+\titlepage
+\end{frame}
+% \beamerdefaultoverlayspecification{<+->}
+
+\begin{frame}
+\frametitle{Outline}
+\tableofcontents{}
+\end{frame}
+
+\section{Past}
+\subsection{ }
+
+\begin{frame}
+  \frametitle{History}
+  \begin{itemize}
+  \item \nlme: 
+    \begin{itemize}
+    \item v. 3.1.1, Nov-1999
+    \item \cite{pinheiro_mixed-effects_2000}
+    \item v. 3.1.50: move to R SVN, Apr-2004
+    \item becomes Recommended 2007?
+    \item current 3.1.109, Apr-2013
+    \end{itemize}
+  \item \lmefour:
+    \begin{itemize}
+    \item initial \code{ChangeLog} entry, Jul-2002
+    \item v. 0.2.1, Jun-2003
+    \item move to R-forge SVN, Nov-2007
+    \item \code{lme4a} ca. Aug-2009
+    \item \code{lme4Eigen} $\to$ \lmefour: Mar-2012
+    \item move to github, Nov-2012
+    \item v. 1.0-0 Aug-2013 ???
+    \end{itemize}
+  \end{itemize}
+\end{frame}
+
+<<getCommits,echo=FALSE>>=
+getCommits <- function(fn="nlme_svnlog.txt") {
+    m1 <- readLines(fn)
+    v <- m1[grepl("^r[0-9]+ ",m1)]
+    d1 <- setNames(data.frame(do.call(rbind,strsplit(v," *\\| *")),
+                              stringsAsFactors=FALSE),
+                   c("release","author","date","lines"))
+   d2 <- transform(d1,
+                    release=as.numeric(gsub("^r","",release)),
+                    date=as.Date(sapply(strsplit(date," "),"[[",1)),
+                    lines=as.numeric(gsub(" +line[s]*","",lines)))
+    d2
+}
+secperday <- 60*24
+sec2day_trans <- trans_new("sec2day", function(x) {x*secperday}, 
+                           inverse=function(x) x/secperday,
+                           format=function (x, ...) {
+                               xx <- format(x*secperday, ...)
+                               names(xx) <- names(x)
+                               xx
+                           },
+                           breaks=function(x) {
+                               extended_breaks()(x*secperday)/secperday
+                           })
+dd <- rbind(data.frame(getCommits(),pkg="nlme"),
+                 data.frame(getCommits("lme4_svnlog.txt"),pkg="lme4"))
+
+gg <- readLines("lme4_gitlog.txt")
+gg <- gg[grepl("^Date: ",gg)]
+gg2 <- data.frame(date=as.Date(gsub("Date: +","",gg)),pkg="lme4_git")
+dd2 <- rbind(subset(dd,select=c("date","pkg")),gg2)
+@ 
+
+\begin{frame}
+  \frametitle{Activity}
+<<echo=FALSE,fig.width=7,fig.height=4,out.width="\\textwidth">>=
+ggplot(dd2,aes(x=date,colour=pkg))+geom_density(aes(y=..density..))+geom_rug()+
+    scale_y_continuous(trans=sec2day_trans)+
+    scale_colour_brewer(palette="Dark2")+
+    labs(y="Commits/day")
+@
+\end{frame}
+
+\section{Present}
+\subsection{The package itself}
+
+
+\begin{frame}
+  \frametitle{Code structure (\code{mvbutils::foodweb})}
+<<echo=FALSE,fig.width=8,fig.height=5,out.width="\\textwidth">>=
+par(xpd=NA)
+foodweb(where="package:lme4")
+@ 
+\end{frame}
+\begin{frame}
+  \frametitle{Tiers}
+  \begin{description}
+
+  \item[I] low-level computational/matrix representation; 
+    PWRSS solutions \\
+    (\code{Eigen} package; Julia)
+  \item[II] low-level computation: \\
+    PWRSS iteration/step-halving, Laplace/AGQ
+  \item[III] nonlinear optimization over $\theta$, ($\beta$)
+  \item[IV] API; interface, methods, modularization
+  \item[V] downstream packages
+  \end{description}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Features}
+  \begin{description}
+  \item[I] fill-reducing permutations (speed, for large problems; crossed random effects)
+  \item[II] GLMMs (step-halving, Laplace, AGQ)
+  \item[III] fit on constrained scale; default is derivative-free with box constraints (Nelder-Mead, BOBYQA), but flexible
+  \item[IV] profiling; parametric bootstrap; \code{predict} and \code{simulate}; 
+    deviance function and modular structure
+  \end{description}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Issues}
+  What have we (\lmefour\ authors) been doing?
+  \begin{itemize}
+  \item fixing glitches and achieving consistency \ldots
+  \item \ldots especially for GLMMs (e.g. updating weights)
+  \item numerical stability of fits (e.g. boundary issues)
+  \item evaluation and environments (e.g. call-modification)
+  \end{itemize}
+\end{frame}
+
+<<CRANscrape,echo=FALSE,results="hide",cache=TRUE>>=
+source("CRANscrape_funs.R")
+## rpkg <- recent.packages.rds()
+load("rpkg.RData")
+stripwhite <- function(s) {
+  gsub("^[[:space:]]+","",
+       gsub("[[:space:]]+$","",s))
+}
+rpkg2 <- transform(subset(rpkg,select=c(Package,Author)),
+                   Author=stripwhite(gsub("^([^,<&;\\[]+).*","\\1",
+                               gsub("^(.+)(and|by|AND|with|Contributions).*",
+                                    "\\1",Author))))
+blob <- readLines("report_cran.html")
+d2 <- scrapePackageStats(blob=blob)
+library(plyr)
+d4 <- ddply(d2,"pkg",summarise,tot=sum(n))  ## aggregate to sums
+d5 <- transform(d4,
+                pkg=factor(pkg,levels=as.character(pkg)[rev(order(tot))]),
+                rank=rank(-tot,ties.method="first"))
+@ 
+
+<<CRANproc,results="hide">>=
+ss <- subset(d5,pkg=="lme4")
+@ 
+\begin{frame}
+  \frametitle{Metrics}
+  \begin{itemize}
+    %% wc -l R/*.R | tail -1  
+    %% wc -l src/*.{c*,h} | tail -1  
+  \item 7600 lines of R code, 3270 of C++ code
+  \item $\approx$ 80 downstream packages (Imports/Suggests/Depends); \\
+    433 recursive links (\code{tools::dependsOnPkgs})
+  \item for 9 June -- 4 August 2013, \Sexpr{ss[["tot"]]} downloads
+    from \url{http://probability.ca/cran} (rank \Sexpr{ss[["rank"]]}/\Sexpr{nrow(d5)})
+  \end{itemize}
+\end{frame}
+
+\subsection{The larger context}
+
+\begin{frame}
+  \frametitle{Competitors (deterministic)}
+  \begin{tabular}{lp{3in}}
+    \textbf{package} & \textbf{features} \\
+    \hline
+    \code{glmmADMB}* & negative binomial I/II, zero-inflated/hurdle, \ldots \\
+    \code{glmmML} & non-Normal RE, bootstrap \\
+    \code{npmlreg} &  non-parametric RE (by EM) \\
+    \code{hglm} & hierarchical GLMs \\
+    \code{lmm} & (LMMs only) \\
+    \code{repeated}* & \\
+    \code{sabreR} & \\
+    \code{MASS::glmmPQL} & R-side effects (???) \\
+    \code{} & \\
+    \hline
+\end{tabular}
+(*=off-CRAN) \\
+Non-R: AS-REML/Genstat (flexible variance), SAS, MLWiN, HLM, GLAAMM/Stata,
+\ldots
+\end{frame}
+
+\begin{frame}
+  \frametitle{Comparison with \cite{zhang_fitting_2011} (1)}
+  \begin{center}
+  \includegraphics[width=0.6\textwidth]{cplot2_cropped.pdf}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Comparison \cite{zhang_fitting_2011} (2)}
+  \begin{center}
+    \includegraphics[width=0.6\textwidth]{cplot3_cropped.pdf}
+  \end{center}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Competitors (stochastic)}
+  \begin{tabular}{lp{3in}}
+    \textbf{package} & \textbf{features} \\
+    \hline
+    \code{bernor}* & Monte Carlo expectation-maximization \\
+    \code{MCMCglmm} & multivariate/multitype, zero-inflated/hurdle, 
+    flexible variance, MCMC \\
+    \code{INLA}* & \\
+    \hline
+  \end{tabular}
+  Non-R: BUGS/JAGS/Stan (and \code{R2*})
+\end{frame}
+
+\begin{frame}
+  \frametitle{Environment}
+  \begin{itemize}
+  \item CRAN administrators
+    \begin{itemize}
+    \item C++/Rcpp/RcppEigen issues
+    \end{itemize}
+  \item Infrastructure maintainers (reference classes, Rcpp)
+  \item downstream package maintainers
+    \begin{itemize}
+    \item variation in coding/packaging style, statistical philosophy
+    \item what should core \lmefour\ provide?
+    \end{itemize}
+  \item users (r-sig-mixed-models, Stack Overflow/Cross Validated)
+    \begin{itemize}
+    \item variation in sophistication/needs
+    \item latent demand?
+    \end{itemize}
+  \end{itemize}
+\end{frame}
+
+\section{Future}
+\subsection{ }
+ 
+\begin{frame}
+  \frametitle{Near future}
+  \begin{itemize}
+  \item cleanup and tweaks, e.g.
+    \begin{itemize}
+    \item finish neg binom models (IV)
+    \item better input/output tests (III, IV)
+    \item low-hanging parallelization
+    \end{itemize}
+  \item fix GLMM edge cases (PWRSS failures) (II)
+  \item evaluate/improve performance, esp. on large data (I)
+  \item write JSS paper(s)
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Wishlist}
+  \begin{itemize}
+  \item R-side effects (IV)
+  \item flexible RE variance (e.g. spatial/phylogenetic GLMMs) (IV)
+  \item speed optimization (I)
+  \item working MCMC sampler (IV)
+  \item AGQ, postVar for complex models (II, IV)
+  \item improve bootMer (\code{merBoot} features) (IV)
+  \item improve GLMMs that use estimated scale parameters (III, IV)
+  \item lightweight stored models (IV)
+  \item \code{simulate}/\code{predict} with \code{newdata}, \code{newpar(a)ms}
+  \item systematic (G)LMM comparison across packages/settings
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+\let\emph\oldemph
+\small
+
+\bibliography{glmm}
+\end{frame}
+
+\end{document}
+
+
+TO DO:
+* re-do Zhang comparison plots?
+* pictures and values on # of downloads, downstream dependencies, etc.
