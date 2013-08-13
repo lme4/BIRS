@@ -8,3 +8,4 @@ Additional topics
     a. GHQ and AGQ for models with nested random effects
 	b. lmerTest package facilities
 	c. comparison of approximation methods for GLMMs
+3. Expanded parameter set
