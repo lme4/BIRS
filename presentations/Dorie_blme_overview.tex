@@ -1,0 +1,170 @@
+\documentclass{beamer}
+\mode<presentation>
+%\documentclass{article}
+%\usepackage{beamerarticle}
+
+\usecolortheme{lily}
+\useoutertheme{infolines}
+\usetheme{Montpellier}
+\setbeamertemplate{navigation symbols}{} 
+\usepackage{graphicx}
+\usepackage{verbatim}
+\usepackage{color}
+\usepackage{amsmath, amsthm}
+
+\newcommand{\E}{\mathsf{E}}
+\newcommand{\VAR}{\mathsf{VAR}}
+\newcommand{\COV}{\mathsf{COV}}
+\newcommand{\SD}{\mathsf{SD}}
+\newcommand{\Prob}{\mathsf{P}}
+\DeclareMathOperator*{\VEC}{vec}
+
+\let\proglang=\textsf
+\newcommand{\code}[1]{\texttt{\small{#1}}}
+\newcommand{\package}[1]{\textsf{\small{#1}}}
+
+%\beamertemplatetransparentcovered
+
+\title[blme]{blme}
+\author[Vincent Dorie]{Vincent Dorie}
+\institute{New York University}
+\date{\today}
+
+\begin{document}
+
+\setlength{\parindent}{0pt}
+
+%\begin{frame}[plain]
+% \titlepage
+%\end{frame}
+
+\begin{frame}{How \tt{lmer} Works}
+Joint dist:
+\vspace{-0.1in}
+\begin{multline*}
+p(y, u; \theta, \beta, \sigma^2) \propto
+(\sigma^2)^{-(N + Q) / 2} \\
+\exp\left\{
+-\frac{1}{2\sigma^2}\left\|
+\begin{bmatrix}
+y \\ 0 \end{bmatrix}
+-\begin{bmatrix}Z\Lambda(\theta) & X \\
+I & 0
+\end{bmatrix}
+\begin{bmatrix} u \\ \beta \end{bmatrix} \right\|^2\right\}
+\end{multline*}
+
+\begin{enumerate}
+\item Calculate joint mode of $u, \beta$: $\tilde{u}, \tilde\beta$
+\begin{enumerate}
+\item Compute decomposition of augmented design, $L, R_{ZX}, R_X$
+\item $(A^\top A)^{-1}A^\top y'$
+\end{enumerate}
+\item Integrate $u$ - marginal likelihood
+\item Profile $\beta$
+\item Profile $\sigma^2$
+\item Loop over deviance
+\end{enumerate}
+\end{frame}
+
+\begin{frame}{Marginal likelihood}
+\begin{multline*}
+p(y ; \theta, \beta, \sigma^2) \propto
+(\sigma^2)^{-N/2} |L(\theta)|^{-1} \exp\left\{
+-\frac{1}{2\sigma^2}\left\|R_X(\beta - \tilde\beta)\right\|^2\right\} \times
+\\
+\exp\left\{
+-\frac{1}{2\sigma^2}\left\|
+\begin{bmatrix}
+y \\ 0 \end{bmatrix}
+-\begin{bmatrix}Z\Lambda(\theta) & X \\
+I & 0
+\end{bmatrix}
+\begin{bmatrix} \tilde{u} \\ \tilde\beta \end{bmatrix} \right\|^2\right\}
+\end{multline*}
+
+\begin{itemize}
+\item Joint mode in $\beta$ maximizes likelihood
+\item Joint mode gives PWRSS, maximizes $\sigma^2$
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Priors ``For Free''}
+Add $\beta \sim \mathrm{N}(0, \sigma^2\Sigma_\beta)$, joint dist:
+\vspace{-.1in}
+\begin{multline*}
+p(y, u; \theta, \beta, \sigma^2) \propto
+(\sigma^2)^{-(N + Q + P) / 2}
+|\Sigma_\beta|^{-1/2}\\
+\exp\left\{
+-\frac{1}{2\sigma^2}\left\|
+\begin{bmatrix}
+y \\ 0 \\ 0\end{bmatrix}
+-\begin{bmatrix}Z\Lambda(\theta) & X \\
+0 & \Sigma_\beta^{-1/2} \\
+I & 0
+\end{bmatrix}
+\begin{bmatrix} u \\ \beta \end{bmatrix} \right\|^2\right\}
+\end{multline*}
+
+Changes:
+\begin{enumerate}
+\item PWRSS includes $\tilde\beta^\top \Sigma_\beta^{-1}\tilde\beta$ (falls
+  out of joint mode)
+\item $R_X^\top R_X = X^\top X - R_{ZX}^\top R_{ZX} + \Sigma_\beta^{-1}$
+\end{enumerate}
+
+{\pause \color{red}{$\beta \sim \mathrm{N}(0, \Sigma_\beta)$ much, much harder}}
+\end{frame}
+
+\begin{frame}{More ``For Free''}
+\begin{itemize}
+\item
+$\sigma^2 \sim \Gamma^{-1}$ - adjust degrees of freedom, add constant
+to PWRSS
+\item
+$\sigma^2 \sim \Gamma$, $\sigma \sim \Gamma^{-1}$ yield quadratic
+maximizer for $\sigma^2$
+\item
+$\sigma^2 = \sigma^2_0$, skip profiling step and plug in
+\end{itemize}
+\vspace{0.1in}
+PWRSS less useful/concrete
+\end{frame}
+
+\begin{frame}{$\theta$ Priors}
+Any prior on $\Sigma(\theta)$ can be tacked on as ``penalty'' \\
+\vspace{0.1in}
+What of $\tilde\Sigma = \sigma^2 \Sigma(\theta)$?
+\vspace{0.1in}
+\begin{itemize}
+\item Inv-Wishart yields functional form equivalent to Inv-Gamma on
+  $\sigma^2$
+\item Wishart and $\tilde\Sigma^{1/2} \sim$ Inv-Wishart yield
+  quadratic in $\sigma^2$ as before
+\end{itemize}
+\end{frame}
+
+\begin{frame}{GLMMs}
+\begin{itemize}
+\item $\sigma^2$ not (yet) relevant
+\item $\beta$ not profiled, numerically optimized
+\end{itemize}
+All priors easy
+\end{frame}
+
+\begin{frame}{Wishlist}
+Hooks into/pause optimization at:
+\begin{itemize}
+\item For given $\theta$, just do decomp \& let me tweak $R_X$
+\item For given $\theta$, decomp, just do joint mode
+\item Less ambitiously, way to penalize deviance
+\item Something like an interface
+\end{itemize}
+\vspace{0.1in}
+For last point, can already wrap deviance \\ \vspace{0.15in}
+Or, just throw everything into numeric optimizer
+\end{frame}
+
+\end{document}
