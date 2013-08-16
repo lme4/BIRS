@@ -1,0 +1,202 @@
+%% somehow need to use R in 32bit mode.
+
+
+%% Setting default Sweave options
+\SweaveOpts{engine=R, eps=FALSE, pdf=TRUE, width=5, height=2.8}
+\SweaveOpts{strip.white=true, keep.source=TRUE}
+\SweaveOpts{prefix.string=figs/fig-ex, include=FALSE}
+%%% DISABLE / ENABLE caching
+%\SweaveOpts{eval=FALSE}
+
+<<initvisible>>=
+require(robustlmm)
+<<init, echo=FALSE>>=
+options(width=70,
+        str=strOptions(strict.width = "wrap", vec.len=2),
+        xtable.size="\\small")
+require(ggplot2)
+if(FALSE)
+require(ggplot2extra)
+source("ggplot.theme.R")
+require(xtable)
+if(FALSE)
+source("../Diss/plots.R")
+## st: function that caches the results and returns the system.time
+require(digest)
+st <- function(expr, update.cache=FALSE) {
+    sexpr <- substitute(expr)
+    .DIR <- "cache" # MKo: "../Diss/cache"
+    file <- file.path(.DIR, digest(sexpr, "sha1"))
+    if (file.exists(file) && !update.cache) {
+        pf <- parent.frame()
+        load(file, envir=pf)
+    } else {
+        if(!file.exists(.DIR)) dir.create(.DIR)
+        ## do something similar as system.time
+        time <- proc.time()
+        expr
+        new.time <- proc.time()
+        elapsed.time <- new.time - time
+        ## save created object
+        save(list=c(as.character(sexpr[[2]]), "elapsed.time"), file=file)
+    }
+    structure(elapsed.time, class = "proc_time")
+}
+
+lqqPsi <- psiFuncCached(rho = function(x, cc) Mpsi(x, cc, "lqq", -1),
+                        psi = function(x, cc) Mpsi(x, cc, "lqq", 0),
+                        Dpsi = function(x, cc) Mpsi(x, cc, "lqq", 1),
+                        wgt = function(x, cc) Mwgt(x, cc, "lqq"),
+                        Dwgt = function(x, cc) (Mpsi(x, cc, "lqq", 1) -
+                                               Mwgt(x, cc, "lqq"))/x,
+                        name = "lqq",
+                        cc = c(-0.5, 1.5, 0.95, NA))
+
+bisquarePsi <- psiFuncCached(rho = function(x, k) Mpsi(x, k, psi="Tukey", -1),
+                             psi = function(x, k) Mpsi(x, k, psi="Tukey", 0),
+                             Dpsi= function(x, k) Mpsi(x, k, psi="Tukey", 1),
+                             wgt = function(x, k) Mwgt(x, k, psi="Tukey"),
+                             ## was (1 - (x/k)^2)^2*(abs(x) <= k)
+                             Dwgt = function(x, k) (-(4*(1-(x/k)^2))*x/k^2)*(abs(x) <= k),
+                             name = "bisquare",
+                             k = 4.68)
+## make the functions wgt.e and wgt.b accessible again...
+wgt.e <- robustlmm:::wgt.e
+wgt.b <- robustlmm:::wgt.b
+
+@
+
+\stitle{\Rp implementation demo: Penicillin example}
+<<load-robustlmm,results=hide>>=
+require(robustlmm)
+<<penicillin-setup>>=
+## load Penicillin data and create contaminated data
+data(Penicillin, package="lme4")
+Penicillin <- within(Penicillin, plate <- reorder(plate, diameter))
+PenicillinC <- within(Penicillin, {
+  diameter[plate == "m"] <- diameter[plate == "m"] / 10
+  diameter[plate == "k" & sample == "F"] <- 16
+})
+attr(PenicillinC$plate, "scores") <- NULL
+@
+
+<<penicillin-str>>=
+str(PenicillinC)
+@
+
+Fit classic linear mixed effects model:
+<<penicillin-lmerC>>=
+st(classicalC <- lmer(diameter ~ 1 + (1|plate) + (1|sample), PenicillinC))
+@
+
+Fit robust linear mixed effects model:
+<<penicillin-rlmer>>=
+st(robustC <- rlmer(diameter ~ 1 + (1|plate) + (1|sample), PenicillinC,
+                   rho.e = smoothPsi, rho.b = smoothPsi,
+                   rho.sigma.e = psi2propII(smoothPsi, k = 2.28),
+                   rho.sigma.b = psi2propII(smoothPsi, k = 2.28)))
+@
+
+\clearpage
+<<penicillin-rlmer-summary>>=
+summary(robustC)
+@
+
+\clearpage
+It is also possible to tune the $\psi$-functions for the two variance
+components separately. Here: fit \emph{plate} variance component
+robustly, but use most efficient (classical) method for \emph{sample}.
+<<penicillin2>>=
+st(robustC2 <- rlmer(diameter ~ 1 + (1|plate) + (1|sample), PenicillinC,
+                    rho.sigma.e = psi2propII(smoothPsi, k = 2.28),
+                    rho.b = list(smoothPsi, cPsi),
+                    rho.sigma.b = list(psi2propII(smoothPsi, k = 2.28),
+                                       cPsi)))
+@
+
+\clearpage
+\stitle{Comparison of the classical and robust estimates}\\
+
+<<penicillin-clean-tri,echo=FALSE>>=
+## need to trick the compare function...
+..tmp <- PenicillinC ; PenicillinC <- Penicillin
+classical <- lmer(diameter ~ 1 + (1|plate) + (1|sample),
+                  PenicillinC)
+PenicillinC <- ..tmp
+<<penicillin-cmp,results=tex>>=
+print(xtable(compare(classicalC, robustC, classical, show.rho.functions=FALSE),
+             #caption="Comparison table of the fitted models for the Penicillin example.",
+             label="tab:cmpPenicillin"), floating=TRUE, size="\\normalsize")
+@
+Classical fit on contaminated data is clearly off. \\
+Only minor differences between robust and classical fit on clean data.
+
+\clearpage
+\stitle{Residual analysis}\\
+
+<<penicillin-ta,fig=TRUE,width=2.5,height=2.5, eval=FALSE,echo=FALSE>>=
+##                                             ---------- missing Manuel's
+lower <- floor(min(wgt.e(robustC), wgt.b(robustC))*100)/100
+ta(robustC) + scale_colour_gradient(limits=c(lower,1)) +
+    opts(legend.position = "none", title="Tukey-Anscombe Plot")
+<<penicillin-qq-resid,fig=TRUE,width=2.5,height=2.5, eval=FALSE,echo=FALSE>>=
+##                                             ---------- missing Manuel's
+qq(robustC) + scale_colour_gradient(limits=c(lower,1)) +
+    opts(legend.position = "none", title="QQ-plot of the Residuals")
+<<penicillin-qq-ranef,fig=TRUE,height=3.3, eval=FALSE,echo=FALSE>>=
+##                                             ---------- missing Manuel's>>=
+qq(robustC, type="ranef") +
+    scale_colour_gradient("robustness weights", limits=c(lower,1)) +
+    opts(legend.position = "bottom", legend.box = "horizontal",
+         title = "QQ-plot of the Random Effects")
+@
+
+\includegraphics[width=0.45\textwidth]{figs/fig-ex-penicillin-ta}
+\hspace{1em}
+\includegraphics[width=0.45\textwidth]{figs/fig-ex-penicillin-qq-resid}
+\vspace{-0.5em}
+
+\includegraphics[width=0.9\textwidth,clip,trim=0 0 0 7cm]{figs/fig-ex-penicillin-qq-ranef}
+
+\clearpage
+\includegraphics[width=0.9\textwidth]{figs/fig-ex-penicillin-qq-ranef}
+
+\clearpage
+\stitle{Which observations were downweighted?}\\
+
+<<penicillin-robustness-weights-contaminated,fig=TRUE>>=
+tmp <- cbind(PenicillinC, wgt.e = wgt.e(robustC))
+print(ggplot(tmp, aes(plate, diameter, color = sample)) +
+      geom_point(aes(size=1/wgt.e)) + geom_line(aes(as.numeric(plate))) +
+      scale_colour_brewer("Sample", palette="Dark2") +
+      scale_y_continuous(breaks=c(0,5,10,15,20,25)) +
+      scale_size_continuous(expression(w[e]),breaks=c(1,1/0.66,1/0.412,1/0.17),
+                            labels=c(1,0.66,0.42,"0.17     "), range=c(1,6)) +
+      xlab("Plate") + ylab("Diameter growth\n inhibition zone (mm)") +
+      opts(legend.position = "bottom", legend.box = "horizontal"))
+@
+
+\includegraphics[width=0.98\textwidth]{figs/fig-ex-penicillin-robustness-weights-contaminated}
+
+% \clearpage
+% \stitle{Which observations were downweighted? (original data)}\\
+
+% <<penicillin-robustness-weights,fig=TRUE,results=hide>>=
+% maxSize1 <- 1/min(wgt.e(robustC))
+% st(robust <- rlmer(diameter ~ 1 + (1|plate) + (1|sample), Penicillin,
+%                    rho.sigma.e = psi2propII(smoothPsi, k = 2.28),
+%                    rho.sigma.b = psi2propII(smoothPsi, k = 2.28)))
+% maxSize2 <- 1/min(wgt.e(robust))
+% rangeEnd <- 6/maxSize1*maxSize2
+% tmp <- cbind(Penicillin, wgt.e = wgt.e(robust))
+% print(ggplot(tmp, aes(plate, diameter, color = sample)) +
+%       geom_point(aes(size=1/wgt.e)) + geom_line(aes(as.numeric(plate))) +
+%       scale_colour_brewer("Sample", palette="Dark2") +
+%       scale_y_continuous(breaks=c(18,20,22,24,26)) +
+%       scale_size_continuous(expression(w[e]),breaks=c(1,1/0.66,1/0.5,2.5),
+%                             labels=c(1,0.66,0.5,"0.33     "), range=c(1,rangeEnd)) +
+%       xlab("Plate") + ylab("Diameter growth\n inhibition zone (mm)") +
+%       opts(legend.position = "bottom", legend.box = "horizontal"))
+% @
+
+% \includegraphics[width=0.98\textwidth]{figs/fig-ex-penicillin-robustness-weights}
